@@ -11,27 +11,27 @@ class TEST:
 
     def send(self, payload_s:int):
         payload = b"a" * payload_s
-        self.socket.logn_udp_sendto(payload)
+        self.socket.long_udp_sendto(payload)
     
     def recv(self):
         self.socket.udp_bind()
         data,addr = self.socket.long_udp_recv()
-        
-        print(data[:1], len(data),addr)
+         
+        #print(data[:1], len(data),addr)
 
 
 if __name__ == "__main__":
     
     addr = ("127.0.0.1", 1234)
     packet_split_size = 128
-    packet_payload_size = 256
+    packet_payload_size = 200000
 
     run = TEST(addr, packet_split_size)
-        
+     
     if arg[1] == "0":
         run.send(packet_payload_size)   
 
     elif arg[1] == "1":
         run.recv()
 
-        
+     
