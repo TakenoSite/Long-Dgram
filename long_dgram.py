@@ -272,7 +272,6 @@ class CRYPT:
         self.key_transmission_code = struct.pack("!7s",b"key_req")
         self.rsa_encrypt_msg_code = struct.pack("!3sx",b"rsa")
 
-
         pass 
 
     def rsa_generate_keys(self):
@@ -326,17 +325,18 @@ class FROM_UDP_SOCKET:
             self.udp_socktimeout(1)
             
             try:
-                data, _ = self.udp_recv(self.crypt.rsa_keys_lenght_to_bytes + 0xf)
+                data, _ = self.udp_recv(1024)
             except:
                 return -1
             
-            rsa_public_key_decode = data
-            rsa_public_key_unpack = struct.unpack("!{}sxQx".format(self.crypt.rsa_keys_lenght_to_bytes), rsa_public_key_decode)
+            rsa_public_key_decode = base64.b64decode(data)
+            rsa_public_key_unpack = struct.unpack("={}sxQx".format(self.crypt.rsa_keys_lenght_to_bytes), 
+                    rsa_public_key_decode)
             
             rsa_public_keys = self.crypt.rsa.util.bytes_to_long(rsa_public_key_unpack[0])
             self.keyinfo = {"pub_key":{"max":rsa_public_keys, "e":rsa_public_key_unpack[1]}, "priv_key":None}
-        
-         
+
+
         encrypted = self.crypt.rsa.util.long_to_bytes(self.crypt.rsa.rsa_encrypt(payloads, pub_key=self.keyinfo["pub_key"])[0])
         if encrypted == None:
             return -2
@@ -344,41 +344,39 @@ class FROM_UDP_SOCKET:
         
         encrypt_payload = self.crypt.rsa_encrypt_msg_code + encrypted
         self.udp_sendto(encrypt_payload)
+        
+        return 0
     
-    
-    
+     
     def udp_secure_recv(self, bufsize:int)->list:
         if self.keyinfo["priv_key"] == None: # gen rsa_key
-            print("key gen ...")
+            print("gen_keys..")
             gen_keys = self.crypt.rsa_generate_keys()
         
             key_encode = self.crypt.rsa.rsa_encode_keys(gen_keys) 
             pub_key  = key_encode[0][0]
             priv_key = key_encode[0][1]
             self.keyinfo = {
-                    "pub_encode_key":pub_key, 
-                    "priv_encode_key":priv_key
+                    "pub_key":pub_key, 
+                    "priv_key":gen_keys["priv"]
                     }
-            
             print("complete")
+             
         # key transmission 
-        
         secure_recv_bufsize = (self.crypt.rsa_keys_lenght // 8) + 0xf 
-        self.udp_bind() 
         while 1:
             data,addr = self.udp_recv(secure_recv_bufsize)
-            print(data)
+            #print(data)
             if data == self.crypt.key_transmission_code: # key transmission 
-                
-                #debug 
-                r = base64.b64decode(self.keyinfo["pub_encode_key"]) # なぜか受信先でdecode できないため
-                
-                self.sockdg.sendto(r, addr) 
+                self.sockdg.sendto(self.keyinfo["pub_key"], addr) 
                     
             elif data[:4] == self.crypt.rsa_encrypt_msg_code: # decrypted
-                print(gen_keys["priv"])
-                decrypted = self.crypt.rsa.rsa_decrypt([self.crypt.rsa.util.bytes_to_long(data[4:])], gen_keys["priv"])
-                print(decrypted) 
+                # Decryption by private key
+                decrypted = self.crypt.rsa.rsa_decrypt([self.crypt.rsa.util.bytes_to_long(data[4:])], 
+                        self.keyinfo["priv_key"])
+                
+                #decrypted = data
+
                 return decrypted, addr 
 
     
@@ -418,7 +416,7 @@ class FROM_UDP_SOCKET:
                 response_t = round((end_t-start_t), 4) #tt算出
                 rto_func.resolve_srtt(response_t) # SRTT算出
                 break 
-        return
+        return 0
     
     
     def long_udp_recv(self)->bytes:
@@ -451,5 +449,6 @@ class FROM_UDP_SOCKET:
                 if data != None:
                     #print(data[:20], len(data)) debug 
                     return data,addr
-         
+
+                
 # end

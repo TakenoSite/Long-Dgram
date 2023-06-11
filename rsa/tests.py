@@ -4,6 +4,7 @@ from rsa_util import UTIL
 import base64
 import sys 
 import struct
+import time
 
 args = sys.argv
 
@@ -96,8 +97,8 @@ if __name__ == "__main__":
    
     print("[*] generate rsa keys ...")
     
-    #gen_key = rsa.rsa_generate_keys(bit_size=rsa_keys_size) 
-    gen_key = rsa.rsa_load_keys("public_keys.pem", "private_keys.pem",key_length=rsa_keys_size)
+    gen_key = rsa.rsa_generate_keys(bit_size=rsa_keys_size) 
+    #gen_key = rsa.rsa_load_keys("public_keys.pem", "private_keys.pem",key_length=rsa_keys_size)
 
     #共有鍵
     pub_key = gen_key["pub"]
@@ -140,8 +141,14 @@ if __name__ == "__main__":
         to_hex = util.long_to_bytes(encrypted[0]).hex()
         print("encrypted : ") 
         print_bytes(to_hex)
-                 
-        decrypted = rsa.rsa_decrypt(encrypted, priv_key)
+        
+        st=time.time()
+        for i in range(100):
+            decrypted = rsa.rsa_decrypt(encrypted, priv_key)
+        et = time.time()
+
+        rt = et - st
+        print(rt)
         print("\ndecrypted : ")
         print(decrypted)
         #print_bytes(decrypted[0].hex())

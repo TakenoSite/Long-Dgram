@@ -160,6 +160,7 @@ class RSA:
         decrypted = []
         for s in msg:
             decrypt = self.math.modular_exp(s, priv_key["e"] , priv_key["max"])
+            #decrypt = pow(s, priv_key["e"], priv_key["max"]) 
             if decrypt == -1:
                 return None
              

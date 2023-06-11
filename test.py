@@ -31,19 +31,27 @@ class TEST:
             print(data)
     
     def secure_recv(self):
-        data,_ = self.socket.udp_secure_recv(1024)
-        print(data)
+        
+        self.socket.udp_bind()
+        count = 0
+        while 1:
+            data,_ = self.socket.udp_secure_recv(1024)
+            print(count, data)
+
+            count += 1
 
     def secure_send(self, payload_length:int):
         p = b"b" * payload_length
-        res = self.socket.udp_secure_sendto(p)
-        print(res)
+        
+        for _ in range(100):
+            res = self.socket.udp_secure_sendto(p)
+            print(res)
     
 if __name__ == "__main__":
     
     addr = ("127.0.0.1", 1234)
     packet_split_size = 1024
-    packet_payload_size = 3
+    packet_payload_size = 10
 
     run = TEST(addr, packet_split_size)
      
@@ -54,8 +62,7 @@ if __name__ == "__main__":
         run.recv()
     
     elif arg[1] == "2":
-        for i in range((2<<30) // 512):
-            run. s_send(packet_payload_size)
+        run. s_send(packet_payload_size)
     
     elif arg[1] == "3":
         run.s_recv()

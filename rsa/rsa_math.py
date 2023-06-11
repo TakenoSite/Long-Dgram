@@ -11,7 +11,7 @@ class MATH:
                 res = (res * a) % n
             a = (a * a) % n
             b = b >> 1
-            
+         
         return res
 
 
