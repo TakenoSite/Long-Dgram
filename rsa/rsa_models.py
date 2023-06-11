@@ -56,6 +56,10 @@ class RSA:
         
         return [[pubkey_encode, privkeys_encode],[pub_format, priv_format]]
     
+    #def rsa_decode_keys(self,s keyinfo:dict)->dict:
+        
+
+
     
     def rsa_load_keys(self, public_key_file:str, private_key_file:str, key_length=1024)->dict:
         keys = {"pub":{"max":0, "e":0}, 
