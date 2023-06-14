@@ -1,4 +1,4 @@
-from long_dgram import FROM_UDP_SOCKET
+from dgram import FROM_UDP_SOCKET
 import sys
 
 arg = sys.argv
