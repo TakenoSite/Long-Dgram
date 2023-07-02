@@ -17,7 +17,7 @@ class TEST:
         self.socket.udp_bind()
         data,addr = self.socket.long_udp_recv()
          
-        #print(data[:1], len(data),addr)
+        print(data[:1], len(data),addr)
 
 
 if __name__ == "__main__":
