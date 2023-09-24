@@ -1,6 +1,13 @@
-import struct 
-import random, string 
+import struct
+import string 
+import random
 import socket 
+import time 
+import sys
+
+sys.path.append("./rsa") 
+from rsa_models import RSA
+
 
 class UTIL:
     def __init__(self):
@@ -13,12 +20,21 @@ class UTIL:
 class LOGN_UDP_PACKET:
     def __init__(self, packet_size:int):
         self.util = UTIL()
+        
+        # udp packet maxsize : 65535  
+        # udp header  : 8
+        # udp payload max size : 65535 - 8
         self.packet_size = packet_size
-
+        
         self.sequence_id_l = 7
         self.sequence_format = "!Ix"+str(self.sequence_id_l)+"sx"
-
+        
         self.packet_index = {}
+        
+        if packet_size > (((2 << 15)-1) - (5+self.sequence_id_l)):
+            ValueError("packet_size is too large")
+            sys.exit(42) 
+            
         pass 
     
     def packet_split(self, data):
@@ -47,7 +63,9 @@ class LOGN_UDP_PACKET:
         payloads = self.packet_split(payloads)
 
         for sequence_number, data in payloads:
-            packet_with_sequence = struct.pack(self.sequence_format, sequence_number, sequence_id) + data
+            packet_with_sequence = struct.pack(self.sequence_format,
+                    sequence_number, sequence_id) + data
+            
             split_packet_list.append(packet_with_sequence)
         return split_packet_list
     
@@ -107,55 +125,293 @@ class LOGN_UDP_PACKET:
 
 
 
-class FROM_UDP_SOCKET:
-    def __init__(self, addr: list, packet_size=1024):
-        self.addr = addr
-        self.sockfd = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+"""
+  acknowledgment it advances SND.UNA.  The extent to which the values of
+  these variables differ is a measure of the delay in the communication.
+  The amount by which the variables are advanced is the length of the
+  data in the segment.  Note that once in the ESTABLISHED state all
+  segments must carry current acknowledgment information.
+
+  The CLOSE user call implies a push function, as does the FIN control
+  flag in an incoming segment.
+
+  Retransmission Timeout
+
+  Because of the variability of the networks that compose an
+  internetwork system and the wide range of uses of TCP connections the
+  retransmission timeout must be dynamically determined.  One procedure
+  for determining a retransmission time out is given here as an
+  illustration.
+
+    An Example Retransmission Timeout Procedure
+
+      Measure the elapsed time between sending a data octet with a
+      particular sequence number and receiving an acknowledgment that
+      covers that sequence number (segments sent do not have to match
+      segments received).  This measured elapsed time is the Round Trip
+      Time (RTT).  Next compute a Smoothed Round Trip Time (SRTT) as:
+
+        SRTT = ( ALPHA * SRTT ) + ((1-ALPHA) * RTT) 
+
+      and based on this, compute the retransmission timeout (RTO) as:
+
+        RTO = min[UBOUND,max[LBOUND,(BETA*SRTT)]]
+
+      where UBOUND is an upper bound on the timeout (e.g., 1 minute),
+      LBOUND is a lower bound on the timeout (e.g., 1 second), ALPHA is
+      a smoothing factor (e.g., .8 to .9), and BETA is a delay variance
+      factor (e.g., 1.3 to 2.0).
+
+  The Communication of Urgent Information
+
+  The objective of the TCP urgent mechanism is to allow the sending user
+  to stimulate the receiving user to accept some urgent data and to
+  permit the receiving TCP to indicate to the receiving user when all
+  the currently known urgent data has been received by the user.
+
+  This mechanism permits a point in the data stream to be designated as
+  the end of urgent information.  Whenever this point is in advance of
+  the receive sequence number (RCV.NXT) at the receiving TCP, that TCP
+  must tell the user to go into "urgent mode"; when the receive sequence
+  number catches up to the urgent pointer, the TCP must tell user to go
+"""
+
+class RTO:
+    def __init__(self):
+        self.rto = 0
+        self.alpha = 0.8
+        self.beta = 2.0
+        self.ubound = 10
+        self.lbound = 1.0e-04
+    
+        self.rtt = []
+        self.rtt_len = 0
+        self.srtt = [0.1, 0.1]
+
+    def resolve_srtt(self, t:float)->float:
+        self.rtt.append(t)
+        self.rtt_len = len(self.rtt)
         
+        if self.rtt_len < 2:
+            return  
+        
+        self.srtt.append(self.alpha * self.srtt[-2] + ((1 - self.alpha) * self.rtt[-1]))
+
+        if self.rtt_len > 100: #  
+            del self.rtt[0]
+
+    def resolve_rto(self)->float:
+        
+        if self.rtt_len < 2:
+            rto = 1
+            return rto
+
+        rto = min(self.ubound, max(self.lbound, self.beta*self.srtt[-1]))
+        return rto
+
+
+
+
+"""
+    Checksum:  16 bits
+    The checksum field is the 16 bit one's complement of the one's
+    complement sum of all 16 bit words in the header and text.  If a
+    segment contains an odd number of header and text octets to be
+    checksummed, the last octet is padded on the right with zeros to
+    form a 16 bit word for checksum purposes.  The pad is not
+    transmitted as part of the segment.  While computing the checksum,
+    the checksum field itself is replaced with zeros.
+
+    The checksum also covers a 96 bit pseudo header conceptually
+"""
+
+def checksum(data):
+    if len(data) % 2 != 0:
+        data += b'\x00'
+
+    n = 0
+    for i in range(0, len(data), 2):
+        word = struct.unpack("!H", data[i:i+2])[0]
+        n += word
+    
+    resolve = (n >> 16) + (n & 0xffff)
+    resolve += resolve
+    
+    resolve = ~resolve & 0xffff
+    resolve -= 1
+    
+    return resolve
+
+
+def udp_checksum_with_payload(src_ip:str, dst_ip:str, payloads:bytes) -> bytes:
+    
+    udp_length = 11 + len(payloads)  # UDPヘッダとペイロードの長さ
+    
+    udp_pseudoheader  = struct.pack('!4s4sBBH', socket.inet_aton(src_ip),
+            socket.inet_aton(dst_ip), 0, 17, udp_length) # 擬似ヘッダーを作成
+    
+    udp_packet = udp_pseudoheader + payloads # パケットを作成
+
+    checksum_calculated = checksum(udp_packet) # チェックサムを計算
+    
+    #print(checksum_n) debug 
+
+    # チェックサム値をペイロードに仕込む
+    checksums_with_payloads = struct.pack("!Hx", checksum_calculated) + payloads 
+    return checksums_with_payloads
+
+
+class CRYPT:
+    def __init__(self, rsa_keys_lenght=2048):
+        #self.rsa_keys_lenght = rsa_keys_lenght
+        self.rsa = RSA(rsa_keys_lenght)
+         
+
+        pass 
+
+    def rsa_generate_keys(self, key_len=2048):
+        genkey = self.rsa.rsa_generate_keys(key_len)
+        key_encode = self.rsa.rsa_encode_keys(gen_key) 
+        return key_encode 
+        
+    
+class FROM_UDP_SOCKET: 
+    
+    def __init__(self, addr: list, packet_size=1024):
+        
+        self.addr = addr
+        self.sockdg = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+         
         self.packet_size = packet_size
         self.long_udp = LOGN_UDP_PACKET(packet_size)
+        
+        self.crypt = CRYPT()
+        self.keyinfo = None
+
         pass
 
-    def udp_sock(self):
-        return self.sockfd
+    def udp_socketname(self):
+        return self.sockdg
 
     def udp_sockclose(self):
-        self.sockfd.close()
+        self.sockdg.close()
         return
 
     def udp_socktimeout(self, t: int):
-        self.sockfd.settimeout(t)
+        self.sockdg.settimeout(t)
         return
 
-    def udp_sender(self, payload:bytes):
-        self.sockfd.sendto(payload, self.addr)
+    def udp_sendto(self, payload:bytes):
+        self.sockdg.sendto(payload, self.addr)
         return
 
     def udp_bind(self):
-        self.sockfd.bind(self.addr)
+        self.sockdg.bind(self.addr)
         return
 
     def udp_recv(self, bufsize:int) -> list:
-        data, addr = self.sockfd.recvfrom(bufsize)
+        data, addr = self.sockdg.recvfrom(bufsize)
         return data, addr
     
-    def logn_udp_sendto(self, payloads:bytes):
+
+    def udp_secure_sendto(self, payloads:bytes):
+         
+
+        return 
+
+    def udp_secure_recv(self, bufsize:int, key_length:int)->list:
+        if self.keyinfo == None: # gen rsa_key
+            gen_keys = self.crypt.rsa_generate_keys(key_length)
+        
+            pub_key = gen_keys[0][0]
+            priv_key = gen_keys[0][1]
+            self.keyinfo = {"pub_key":pub_key, "priv_key":priv_key}
+            
+        # key transmission 
+        
+        key_transmission_code = struct.pack("!7s","key_req")
+        rsa_encrypt_msg_code = struct.pack("!3sx","rsa")
+        secure_recv_bufsize = (key_length // 8) + 0xf
+        
+        data,addr = self.sockdg.recvfrom(secure_recv_bufsize)
+        
+        while 1:
+            if data == key_transmission_code: # key transmission 
+                self.sockdg.sendto(self.keyinfo["pub_key"], addr) 
+                    
+            elif data[:4] == rsa_encrypt_msg_code: # decrypted
+                
+                return 
+
+    
+    def long_udp_sendto(self, payloads:bytes, set_error_limit=10):
         if type(payloads) !=  bytes:
             print("Data type of payload is not bytes.")
             return None
+        
+        rto_func = RTO() 
          
         for packets in self.long_udp.packet_encode(payloads):
-            print(packets)
-            self.udp_sender(packets)
+            error_count = 0
+             
+            while 1:
+                start_t = time.time()
+                rto = rto_func.resolve_rto() # RTO算出
+                self.udp_socktimeout(rto)
+                
+                # チェックサムを入れる
+                packet_with_checksum = udp_checksum_with_payload(src_ip="0.0.0.0",  
+                        dst_ip=self.addr[0],payloads=packets) 
+                
+                # print(packet_with_checksum) # debug 
+                self.udp_sendto(packet_with_checksum)
+                
+                try:
+                    self.udp_recv(0xf) #ack受信
+                except:
+                    error_count += 1
+                    if error_count == set_error_limit:
+                        # timeout 
+                        return -1
+                    continue
+
+                end_t = time.time()
+                response_t = round((end_t-start_t), 4) #tt算出
+                rto_func.resolve_srtt(response_t) # SRTT算出
+                break 
         return
     
+    
     def long_udp_recv(self)->bytes:
+        ack = struct.pack("!3s", b"ack")
+
         while True:
-            data,addr = self.udp_recv(self.packet_size+128)
-            status = self.long_udp.packet_rebuild(data)
-            if status != None:
-                return status,addr
+            packet,addr = self.udp_recv(self.packet_size+128)
+            
+            try:
+                checksum_value = struct.unpack("!Hx", packet[:3])[0]
+            except:
+                continue
 
+            rhost = addr[0]
+            lhost = "0.0.0.0" #擬似shost  
 
+            payload = packet[3:]
+            payload_l =  11 + len(payload) 
 
+            dgram_pseudoheder = struct.pack("!4s4sBBH", socket.inet_aton(lhost), 
+                    socket.inet_aton(rhost), 0, 17, payload_l) #擬似ヘッダー
+             
+            dgram_pseudopacket = dgram_pseudoheder + payload 
+            checksum_calculated = checksum(dgram_pseudopacket) #checksum 算出
+
+            # 整合性を確認
+            if checksum_value == checksum_calculated:
+                data = self.long_udp.packet_rebuild(payload)
+                self.sockdg.sendto(ack, addr) # ack
+                if data != None:
+                    #print(data[:20], len(data)) debug 
+                    return data,addr
+         
 # end
